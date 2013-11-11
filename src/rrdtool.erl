@@ -35,7 +35,9 @@
 		stop/1,
 		create/5,
 		update/3,
-		update/4
+		update/4,
+		fetch/5,
+		fetch/6
 ]).
 
 % gen_server callbacks
@@ -76,14 +78,31 @@ update(Pid, Filename, DatastoreValues) ->
 update(Pid, Filename, DatastoreValues, Time) ->
 	gen_server:call(Pid, {update, Filename, format_datastore_values(DatastoreValues), Time}, infinity).
 
+fetch(Pid, Filename, Cf, Rz, STime) ->
+	gen_server:call(Pid, {fetch, Filename, Cf, Rz, STime, "now"}, infinity).
+
+fetch(Pid, Filename, Cf, Rz, STime, ETime) ->
+	gen_server:call(Pid, {fetch, Filename, Cf, Rz, STime, ETime}, infinity).
+
+
 % gen_server callbacks
 
 %% @hidden
 init([RRDTool]) ->
-	Port = open_port({spawn_executable, RRDTool}, [{line, 1024}, {args, ["-"]}]),
+	Port = open_port({spawn_executable, RRDTool}, [{line, 10240}, {args, ["-"]}]),
 	{ok, Port}.
 
 %% @hidden
+handle_call({fetch, Filename, Cf, Rz, STime, ETime}, _From, Port) ->
+    Command = ["fetch ", Filename, " ", Cf, " -r ", Rz, " -s ", STime, " -e ", ETime, "\n"],
+	port_command(Port, Command),
+	receive
+		{Port, {data, {eol, "ERROR:"++Message}}} ->
+			{reply, {error, Message}, Port};
+		{Port, {data,{eol,Data}}} ->
+			{reply, data_fetch(Port, string:tokens(Data, " "),[]), Port}
+	end;
+
 handle_call({create, Filename, Datastores, RRAs, Options}, _From, Port) ->
 	Command = ["create ", Options, Filename, " ", string:join(Datastores, " "), " ", string:join(RRAs, " "), "\n"],
 	%io:format("Command: ~p~n", [lists:flatten(Command)]),
@@ -104,6 +123,7 @@ handle_call({update, Filename, {Datastores, Values}, Time}, _From, Port) ->
 			Other
 	end,
 	Command = ["update ", Filename, " -t ", string:join(Datastores, ":"), " ", Timestamp, ":", string:join(Values, ":"), "\n"],
+	%%%
 	%io:format("Command: ~p~n", [lists:flatten(Command)]),
 	port_command(Port, Command),
 	receive
@@ -121,10 +141,9 @@ handle_call(Request, _From, State) ->
 handle_cast(_Msg, State) ->
 	{noreply, State}.
 
-%% @hidden
-handle_info(Info, State) ->
-	io:format("info: ~p~n", [Info]),
-	{noreply, State}.
+handle_info(Msg, State) ->
+    io:format("handle_info: ~p~n", [Msg]),
+    {noreply, State}.
 
 %% @hidden
 terminate(_Reason, Port) ->
@@ -136,6 +155,37 @@ code_change(_OldVsn, State, _Extra) ->
 	{ok, State}.
 
 % internal functions
+-spec data_fetch(Port :: port(), Hd :: [ds_names], Acc :: [term()]) ->
+    [{ds_name ,[{timestamp, value}]}].
+
+data_fetch(Port, Hd, Acc) ->
+    	receive
+		{Port, {data, {eol, "OK"++_}}} ->
+			Acc;
+		{Port, {data,{eol,[]}}} ->
+			data_fetch(Port,Hd, Acc);
+		{Port, {data,{eol,Data}}} ->
+			    [H|T] = [string:strip(List,both,$:) || List <- string:tokens(Data, " ")],
+			    L = [{H,List} || List <- T],
+			    data_fetch(Port, Hd, data_acc(Hd, L, Acc))
+	end.
+
+data_acc([],[], List) ->
+    List;
+
+data_acc([Hh|Ht],[H|T], List) ->
+ case proplists:get_value(Hh, List) of
+    undefined ->
+	data_acc(Ht, T, lists:append(List,[{Hh,[H]}]));
+    Values ->
+	data_acc(Ht, T, lists:map(fun(El) ->
+	    case proplists:get_value(Hh, [El]) of
+		undefined -> El;
+		Values ->
+		    {Hh,lists:append(Values,[H])}
+	    end
+	end,List))
+ end.
 
 format_datastores(Datastores) ->
 	format_datastores(Datastores, []).
@@ -147,7 +197,7 @@ format_datastores([H | T], Acc) ->
 		{Name, DST, Arguments} when is_list(Name), is_atom(DST), is_list(Arguments) ->
 			case re:run(Name, "^[a-zA-Z0-9_]{1,19}$", [{capture, none}]) of
 				nomatch ->
-					throw({error, bad_datastore_name, Name});
+					throw({error, no_match_ds_name_bad_datastore_name, Name});
 				match ->
 					case lists:member(DST, ?STORE_TYPES) of
 						false ->
