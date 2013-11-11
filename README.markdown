@@ -6,6 +6,9 @@ port via its 'remote control' mode (`rrdtool -`).
 
 You should probably use https://github.com/archaelus/errd instead.
 
+Original version here:
+https://github.com/Vagabond/erlang-rrdtool
+
 Usage
 =====
 
@@ -25,10 +28,16 @@ Updating a RRD:
     4> rrdtool:update(Pid, "temperature.rrd", [{"temp", 75}], now()).
     ok
 
+Fetch data from RRD:
+
+    1> {ok, Pid} = rrdtool:start().
+    {ok,<0.41.0>}
+    2> rrdtool:fetch(Pid, "data.rrd","MAX","900", "-24h").
+    3> rrdtool:fetch(Pid, "data.rrd","MAX","900", "-24h", "-12h").
+
 Rebar
 =====
 
 To use rrdtool in your projects, add a dependency to your rebar.config:
 
-    {deps, [{rrdtool, ".*",
-             {git, "git://github.com/Vagabond/erlang-rrdtool.git"", "master"}}]}.
+    {deps, [{rrdtool, ".*",{git, "git://github.com/apofiget/erlang-rrdtool.git"}}]}.
