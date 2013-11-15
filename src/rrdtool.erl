@@ -100,7 +100,7 @@ handle_call({fetch, Filename, Cf, Rz, STime, ETime}, _From, Port) ->
 		{Port, {data, {eol, "ERROR:"++Message}}} ->
 			{reply, {error, Message}, Port};
 		{Port, {data,{eol,Data}}} ->
-			{reply, data_fetch(Port, string:tokens(Data, " "),[]), Port}
+			{reply, {ok, data_fetch(Port, string:tokens(Data, " "),[])}, Port}
 	end;
 
 handle_call({create, Filename, Datastores, RRAs, Options}, _From, Port) ->
