@@ -28,6 +28,17 @@ Updating a RRD:
     4> rrdtool:update(Pid, "temperature.rrd", [{"temp", 75}], now()).
     ok
 
+Updating RRD via rrdcached:
+
+1> rrdtool:cached_update(Pid,"/var/run/rrdcached.sock","data.rrd",["1"],n).
+{ok,"0 errors, enqueued 1 value(s).\n"}
+
+2> rrdtool:cached_update(Pid,"/var/run/rrdcached.sock","data.rrd",["1"],now()).
+{ok,"0 errors, enqueued 1 value(s).\n"}
+
+3> rrdtool:cached_update(Pid,"/var/run/rrdcached.sock","not_found.rrd",["1"],now()).
+{error,"-1 No such file: not_found.rrd\n"}
+
 Fetch data from RRD:
 
     1> {ok, Pid} = rrdtool:start().
@@ -60,6 +71,10 @@ Fetch data from RRD:
         {"1384237800",[...]},
         {[...],...},
         {...}|...]}]}
+
+Dependencies:
+
+* procket libarary for unix socket communications
 
 
 Rebar

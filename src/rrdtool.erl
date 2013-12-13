@@ -36,6 +36,8 @@
 		create/5,
 		update/3,
 		update/4,
+		cached_update/4,
+		cached_update/5,
 		fetch/5,
 		fetch/6
 ]).
@@ -77,6 +79,12 @@ update(Pid, Filename, DatastoreValues) ->
 
 update(Pid, Filename, DatastoreValues, Time) ->
 	gen_server:call(Pid, {update, Filename, format_datastore_values(DatastoreValues), Time}, infinity).
+
+cached_update(Pid, SockFile, Filename, Values) ->
+	gen_server:call(Pid, {cached_update, SockFile, Filename, Values, n}, infinity).
+
+cached_update(Pid, SockFile, Filename, Values, Time) ->
+	gen_server:call(Pid, {cached_update, SockFile, Filename, Values, Time}, infinity).
 
 fetch(Pid, Filename, Cf, Rz, STime) ->
 	gen_server:call(Pid, {fetch, Filename, Cf, Rz, STime, "now"}, infinity).
@@ -132,6 +140,26 @@ handle_call({update, Filename, {Datastores, Values}, Time}, _From, Port) ->
 		{Port, {data, {eol, "ERROR:"++Message}}} ->
 			{reply, {error, Message}, Port}
 	end;
+handle_call({cached_update, SockFile, Filename, Values, Time}, _From, Port) ->
+	Timestamp = case Time of
+		n ->
+			{Mega, Seconds, _} = erlang:now(),
+    		integer_to_list(Mega * 1000000 + Seconds);
+		{Mega, Seconds, _Micro} ->
+			integer_to_list(Mega * 1000000 + Seconds);
+		Other when is_list(Other) ->
+			Other
+	end,
+	Command = ["update ", Filename, " ", Timestamp, ":", string:join(Values, ":"), "\n"],
+	%%% 
+	%%%io:format("Command: ~p~n", [Buf]),
+	Reply = try  sock_send(list_to_binary(SockFile), list_to_binary(Command)) of
+				R -> {ok, R}
+			catch _:I ->
+					{error, I}
+		 	end,
+	{reply, Reply, Port};
+
 handle_call(stop, _From, State) ->
 	{stop, normal, ok, State};
 handle_call(Request, _From, State) ->
@@ -186,6 +214,31 @@ data_acc([Hh|Ht],[H|T], List) ->
 	    end
 	end,List))
  end.
+
+sock_send(SockFile, Cmd) ->
+    {ok, Socket} = procket:socket(local, stream, 0),
+    Sun = <<1:16/native,
+            SockFile/binary,
+            0:((108-byte_size(SockFile))*8)>>,
+    ok = procket:connect(Socket, Sun),
+    ok = procket:sendto(Socket, Cmd, 0, <<>>),
+    try  sock_resp(Socket)
+    	catch _:I -> throw(I)
+    end.
+
+sock_resp(Socket) ->
+   case procket:recvfrom(Socket, 16#FFFF) of
+        {error, eagain} ->
+            timer:sleep(10),
+            sock_resp(Socket);
+        {ok, Buf} ->
+            ok = procket:close(Socket),
+            {ok, Re} = re:compile("^-1."),
+            case re:run(binary_to_list(Buf) , Re) of
+            	nomatch -> binary_to_list(Buf);
+            	{match, _} -> throw(binary_to_list(Buf))
+            end
+    end.
 
 format_datastores(Datastores) ->
 	format_datastores(Datastores, []).
