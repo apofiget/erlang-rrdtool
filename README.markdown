@@ -39,6 +39,22 @@ Updating RRD via rrdcached:
     3> rrdtool:cached_update(Pid,"/var/run/rrdcached.sock","not_found.rrd",["1"],now()).
     {error,"-1 No such file: not_found.rrd\n"}
 
+
+Updating RRD, dedicated mode, only for communications with rrdcached via unix socket file:
+
+    1> {ok, Pid} = rrdtool:start({socket,"/var/run/rrdcached.sock"}).
+    {ok,<0.4543.180>}
+
+    2> rrdtool:cached_update({socket, Pid} ,"data.rrd",["1"],n).
+    {ok,"0 errors, enqueued 1 value(s).\n"}
+
+    3> rrdtool:cached_update({socket, Pid},"data.rrd",["1"],now()).
+    {ok,"0 errors, enqueued 1 value(s).\n"}
+
+    4> rrdtool:cached_update({socket,Pid},"not_found.rrd",["1"],now()).
+    {error,"-1 No such file: not_found.rrd\n"}
+
+
 Fetch data from RRD:
 
     1> {ok, Pid} = rrdtool:start().

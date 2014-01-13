@@ -63,7 +63,7 @@ start() ->
 	gen_server:start(?MODULE, [os:find_executable("rrdtool")], []).
 
 start(RRDTool) when is_list(RRDTool) ->
-	gen_server:start(?MODULE, [RRDTool], []).
+	gen_server:start(?MODULE, [RRDTool], []);
 
 start({socket, SocketFile}) when is_list(SocketFile) ->
 	gen_server:start(?MODULE, [{socket, SocketFile}], []).
@@ -72,7 +72,7 @@ start_link() ->
 	gen_server:start_link(?MODULE, [os:find_executable("rrdtool")], []).
 
 start_link(RRDTool) when is_list(RRDTool) ->
-	gen_server:start_link(?MODULE, [RRDTool], []).
+	gen_server:start_link(?MODULE, [RRDTool], []);
 
 start_link({socket, SocketFile}) when is_list(SocketFile) ->
 	gen_server:start_link(?MODULE, [{socket, SocketFile}], []).
@@ -93,7 +93,7 @@ cached_update({socket, Pid}, Filename, Values) ->
 	gen_server:call(Pid, {cached_update, Filename, Values, n}, infinity).
 
 cached_update({socket, Pid}, Filename, Values, Time) ->
-	gen_server:call(Pid, {cached_update, Filename, Values, Time}, infinity).
+	gen_server:call(Pid, {cached_update, Filename, Values, Time}, infinity);
 
 cached_update(Pid, SockFile, Filename, Values) ->
 	gen_server:call(Pid, {cached_update, SockFile, Filename, Values, n}, infinity).
@@ -114,7 +114,7 @@ fetch(Pid, Filename, Cf, Rz, STime, ETime) ->
 init([{socket, SocketFile}]) ->
 	case file:read_file_info(SocketFile) of
 		{ok, Info} when Info#file_info.access =:= read_write ->	{ok, SocketFile};
-		{ok, Info} -> {stop, no_write_perms_to_unix_socket};
+		{ok, _Info} -> {stop, no_write_perms_to_unix_socket};
 		{error, Reason} -> {stop, Reason}
 	end;
 
@@ -199,7 +199,7 @@ handle_call({cached_update, Filename, Values, Time}, _From, SockFile) when is_li
 			catch _:I ->
 					{error, I}
 		 	end,
-	{reply, Reply, Port};
+	{reply, Reply, SockFile};
 
 handle_call(stop, _From, State) ->
 	{stop, normal, ok, State};
