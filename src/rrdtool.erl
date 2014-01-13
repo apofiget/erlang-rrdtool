@@ -199,6 +199,7 @@ handle_call({cached_update, Filename, Values, Time}, _From, SockFile) when is_li
 			catch _:I ->
 					{error, I}
 		 	end,
+	error_logger:info_msg("Update file: ~p, reply: ~p~n",[SockFile,Reply]),
 	{reply, Reply, SockFile};
 
 handle_call(stop, _From, State) ->
@@ -215,13 +216,14 @@ handle_info(Msg, State) ->
     {noreply, State}.
 
 %% @hidden
-terminate(_Reason, Port) ->
+terminate(_Reason, SockFile) when is_list(SockFile) -> ok;
+
+terminate(_Reason, Port) when is_port(Port) ->
 	port_command(Port, "quit\n"),
 	ok.
 
 %% @hidden
-code_change(_OldVsn, State, _Extra) ->
-	{ok, State}.
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 % internal functions
 -spec data_fetch(Port :: port(), Hd :: [ds_names], Acc :: [term()]) ->
