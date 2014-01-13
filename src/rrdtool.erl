@@ -36,6 +36,7 @@
 		create/5,
 		update/3,
 		update/4,
+		cached_update/3,
 		cached_update/4,
 		cached_update/5,
 		fetch/5,
@@ -54,6 +55,8 @@
 -define(STORE_TYPES,
 	['GAUGE', 'COUNTER', 'DERIVE', 'ABSOLUTE', 'COMPUTE']).
 
+-include_lib("kernel/include/file.hrl").
+
 % public API
 
 start() ->
@@ -62,11 +65,17 @@ start() ->
 start(RRDTool) when is_list(RRDTool) ->
 	gen_server:start(?MODULE, [RRDTool], []).
 
+start({socket, SocketFile}) when is_list(SocketFile) ->
+	gen_server:start(?MODULE, [{socket, SocketFile}], []).
+
 start_link() ->
 	gen_server:start_link(?MODULE, [os:find_executable("rrdtool")], []).
 
 start_link(RRDTool) when is_list(RRDTool) ->
 	gen_server:start_link(?MODULE, [RRDTool], []).
+
+start_link({socket, SocketFile}) when is_list(SocketFile) ->
+	gen_server:start_link(?MODULE, [{socket, SocketFile}], []).
 
 stop(Pid) ->
 	gen_server:call(Pid, stop).
@@ -79,6 +88,12 @@ update(Pid, Filename, DatastoreValues) ->
 
 update(Pid, Filename, DatastoreValues, Time) ->
 	gen_server:call(Pid, {update, Filename, format_datastore_values(DatastoreValues), Time}, infinity).
+
+cached_update({socket, Pid}, Filename, Values) ->
+	gen_server:call(Pid, {cached_update, Filename, Values, n}, infinity).
+
+cached_update({socket, Pid}, Filename, Values, Time) ->
+	gen_server:call(Pid, {cached_update, Filename, Values, Time}, infinity).
 
 cached_update(Pid, SockFile, Filename, Values) ->
 	gen_server:call(Pid, {cached_update, SockFile, Filename, Values, n}, infinity).
@@ -96,12 +111,19 @@ fetch(Pid, Filename, Cf, Rz, STime, ETime) ->
 % gen_server callbacks
 
 %% @hidden
+init([{socket, SocketFile}]) ->
+	case file:read_file_info(SocketFile) of
+		{ok, Info} when Info#file_info.access =:= read_write ->	{ok, SocketFile};
+		{ok, Info} -> {stop, no_write_perms_to_unix_socket};
+		{error, Reason} -> {stop, Reason}
+	end;
+
 init([RRDTool]) ->
 	Port = open_port({spawn_executable, RRDTool}, [{line, 10240}, {args, ["-"]}]),
 	{ok, Port}.
 
 %% @hidden
-handle_call({fetch, Filename, Cf, Rz, STime, ETime}, _From, Port) ->
+handle_call({fetch, Filename, Cf, Rz, STime, ETime}, _From, Port) when is_port(Port) ->
     Command = ["fetch ", Filename, " ", Cf, " -r ", Rz, " -s ", STime, " -e ", ETime, "\n"],
 	port_command(Port, Command),
 	receive
@@ -111,7 +133,7 @@ handle_call({fetch, Filename, Cf, Rz, STime, ETime}, _From, Port) ->
 			{reply, {ok, data_fetch(Port, string:tokens(Data, " "),[])}, Port}
 	end;
 
-handle_call({create, Filename, Datastores, RRAs, Options}, _From, Port) ->
+handle_call({create, Filename, Datastores, RRAs, Options}, _From, Port) when is_port(Port) ->
 	Command = ["create ", Options, Filename, " ", string:join(Datastores, " "), " ", string:join(RRAs, " "), "\n"],
 	%io:format("Command: ~p~n", [lists:flatten(Command)]),
 	port_command(Port, Command),
@@ -121,7 +143,7 @@ handle_call({create, Filename, Datastores, RRAs, Options}, _From, Port) ->
 		{Port, {data, {eol, "ERROR:"++Message}}} ->
 			{reply, {error, Message}, Port}
 	end;
-handle_call({update, Filename, {Datastores, Values}, Time}, _From, Port) ->
+handle_call({update, Filename, {Datastores, Values}, Time}, _From, Port) when is_port(Port) ->
 	Timestamp = case Time of
 		n ->
 			"N";
@@ -140,7 +162,26 @@ handle_call({update, Filename, {Datastores, Values}, Time}, _From, Port) ->
 		{Port, {data, {eol, "ERROR:"++Message}}} ->
 			{reply, {error, Message}, Port}
 	end;
-handle_call({cached_update, SockFile, Filename, Values, Time}, _From, Port) ->
+handle_call({cached_update, SockFile, Filename, Values, Time}, _From, Port) when is_port(Port) ->
+	Timestamp = case Time of
+		n ->
+			{Mega, Seconds, _} = erlang:now(),
+    		integer_to_list(Mega * 1000000 + Seconds);
+		{Mega, Seconds, _Micro} ->
+			integer_to_list(Mega * 1000000 + Seconds);
+		Other when is_list(Other) ->
+			Other
+	end,
+	Command = ["update ", Filename, " ", Timestamp, ":", string:join(Values, ":"), "\n"],
+	%%% 
+	%%%io:format("Command: ~p~n", [Buf]),
+	Reply = try  sock_send(list_to_binary(SockFile), list_to_binary(Command)) of
+				R -> {ok, R}
+			catch _:I ->
+					{error, I}
+		 	end,
+	{reply, Reply, Port};
+handle_call({cached_update, Filename, Values, Time}, _From, SockFile) when is_list(SockFile)  ->
 	Timestamp = case Time of
 		n ->
 			{Mega, Seconds, _} = erlang:now(),
