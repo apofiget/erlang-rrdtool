@@ -90,16 +90,16 @@ update(Pid, Filename, DatastoreValues, Time) ->
 	gen_server:call(Pid, {update, Filename, format_datastore_values(DatastoreValues), Time}, infinity).
 
 cached_update({socket, Pid}, Filename, Values) ->
-	gen_server:call(Pid, {cached_update, Filename, Values, n}, infinity).
+	gen_server:call(Pid, {cached_update, Filename, Values, n}, 30000).
 
 cached_update({socket, Pid}, Filename, Values, Time) ->
-	gen_server:call(Pid, {cached_update, Filename, Values, Time}, infinity);
+	gen_server:call(Pid, {cached_update, Filename, Values, Time}, 30000);
 
 cached_update(Pid, SockFile, Filename, Values) ->
-	gen_server:call(Pid, {cached_update, SockFile, Filename, Values, n}, infinity).
+	gen_server:call(Pid, {cached_update, SockFile, Filename, Values, n}, 30000).
 
 cached_update(Pid, SockFile, Filename, Values, Time) ->
-	gen_server:call(Pid, {cached_update, SockFile, Filename, Values, Time}, infinity).
+	gen_server:call(Pid, {cached_update, SockFile, Filename, Values, Time}, 30000).
 
 fetch(Pid, Filename, Cf, Rz, STime) ->
 	gen_server:call(Pid, {fetch, Filename, Cf, Rz, STime, "now"}, infinity).
@@ -175,11 +175,7 @@ handle_call({cached_update, SockFile, Filename, Values, Time}, _From, Port) when
 	Command = ["update ", Filename, " ", Timestamp, ":", string:join(Values, ":"), "\n"],
 	%%% 
 	%%%io:format("Command: ~p~n", [Buf]),
-	Reply = try  sock_send(list_to_binary(SockFile), list_to_binary(Command)) of
-				R -> {ok, R}
-			catch _:I ->
-					{error, I}
-		 	end,
+	Reply = sock_send(list_to_binary(SockFile), list_to_binary(Command)),
 	{reply, Reply, Port};
 handle_call({cached_update, Filename, Values, Time}, _From, SockFile) when is_list(SockFile)  ->
 	Timestamp = case Time of
@@ -194,12 +190,7 @@ handle_call({cached_update, Filename, Values, Time}, _From, SockFile) when is_li
 	Command = ["update ", Filename, " ", Timestamp, ":", string:join(Values, ":"), "\n"],
 	%%% 
 	%%%io:format("Command: ~p~n", [Buf]),
-	Reply = try  sock_send(list_to_binary(SockFile), list_to_binary(Command)) of
-				R -> {ok, R}
-			catch _:I ->
-					{error, I}
-		 	end,
-	error_logger:info_msg("Update file: ~p, reply: ~p~n",[SockFile,Reply]),
+	Reply = sock_send(list_to_binary(SockFile), list_to_binary(Command)),
 	{reply, Reply, SockFile};
 
 handle_call(stop, _From, State) ->
@@ -259,27 +250,33 @@ data_acc([Hh|Ht],[H|T], List) ->
  end.
 
 sock_send(SockFile, Cmd) ->
-    {ok, Socket} = procket:socket(local, stream, 0),
-    Sun = <<1:16/native,
-            SockFile/binary,
-            0:((108-byte_size(SockFile))*8)>>,
-    ok = procket:connect(Socket, Sun),
-    ok = procket:sendto(Socket, Cmd, 0, <<>>),
-    try  sock_resp(Socket)
-    	catch _:I -> throw(I)
-    end.
+    case procket:socket(local, stream, 0) of
+    	{ok, Socket} ->
+		    Sun = <<1:16/native, SockFile/binary, 0:((108-byte_size(SockFile))*8)>>,
+		    case procket:connect(Socket, Sun) of
+		    	ok ->
+		    		ok = procket:sendto(Socket, Cmd, 0, <<>>),
+		    		sock_resp(Socket);
+		    	R ->
+		    		{error, R}
+		    end;
+		 R ->
+		 	{error, R}
+	end.
 
 sock_resp(Socket) ->
    case procket:recvfrom(Socket, 16#FFFF) of
         {error, eagain} ->
             timer:sleep(10),
             sock_resp(Socket);
+        {error, E} ->
+        	{error, E};
         {ok, Buf} ->
             ok = procket:close(Socket),
             {ok, Re} = re:compile("^-1."),
             case re:run(binary_to_list(Buf) , Re) of
-            	nomatch -> binary_to_list(Buf);
-            	{match, _} -> throw(binary_to_list(Buf))
+            	nomatch -> {ok, binary_to_list(Buf)};
+            	{match, _} -> {error, binary_to_list(Buf)}
             end
     end.
 
