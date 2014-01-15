@@ -175,7 +175,7 @@ handle_call({cached_update, SockFile, Filename, Values, Time}, _From, Port) when
 	Command = ["update ", Filename, " ", Timestamp, ":", string:join(Values, ":"), "\n"],
 	%%% 
 	%%%io:format("Command: ~p~n", [Buf]),
-	Reply = sock_send(list_to_binary(SockFile), list_to_binary(Command)),
+	Reply = sock_send(list_to_binary(SockFile), list_to_binary(Command), 500),
 	{reply, Reply, Port};
 handle_call({cached_update, Filename, Values, Time}, _From, SockFile) when is_list(SockFile)  ->
 	Timestamp = case Time of
@@ -190,7 +190,7 @@ handle_call({cached_update, Filename, Values, Time}, _From, SockFile) when is_li
 	Command = ["update ", Filename, " ", Timestamp, ":", string:join(Values, ":"), "\n"],
 	%%% 
 	%%%io:format("Command: ~p~n", [Buf]),
-	Reply = sock_send(list_to_binary(SockFile), list_to_binary(Command)),
+	Reply = sock_send(list_to_binary(SockFile), list_to_binary(Command), 500),
 	{reply, Reply, SockFile};
 
 handle_call(stop, _From, State) ->
@@ -238,41 +238,51 @@ data_acc([],[], List) ->
 data_acc([Hh|Ht],[H|T], List) ->
  case proplists:get_value(Hh, List) of
     undefined ->
-	data_acc(Ht, T, lists:append(List,[{Hh,[H]}]));
+		data_acc(Ht, T, lists:append(List,[{Hh,[H]}]));
     Values ->
-	data_acc(Ht, T, lists:map(fun(El) ->
-	    case proplists:get_value(Hh, [El]) of
-		undefined -> El;
-		Values ->
-		    {Hh,lists:append(Values,[H])}
-	    end
+		data_acc(Ht, T, lists:map(fun(El) ->
+		    case proplists:get_value(Hh, [El]) of
+			undefined -> El;
+			Values ->
+			    {Hh,lists:append(Values,[H])}
+		    end
 	end,List))
  end.
 
-sock_send(SockFile, Cmd) ->
+sock_send(SockFile, Cmd, N) ->
     case procket:socket(local, stream, 0) of
     	{ok, Socket} ->
 		    Sun = <<1:16/native, SockFile/binary, 0:((108-byte_size(SockFile))*8)>>,
 		    case procket:connect(Socket, Sun) of
 		    	ok ->
 		    		ok = procket:sendto(Socket, Cmd, 0, <<>>),
-		    		sock_resp(Socket);
+		    		sock_resp(Socket, 1000);
+		    	{error,eagain} when N =:= 0->
+		    		{error, {socket_connect, eagain}};
+		    	{error,eagain} ->
+		    		timer:sleep(10),
+		    		sock_send(SockFile, Cmd, N - 1);
 		    	R ->
-		    		{error, R}
+		    		procket:close(Socket),
+		    		{error, {socket_connect, R}}
 		    end;
 		 R ->
-		 	{error, R}
+		 	{error, {socket_create, R}}
 	end.
 
-sock_resp(Socket) ->
+sock_resp(Socket, N) ->
    case procket:recvfrom(Socket, 16#FFFF) of
+   		{error, eagain} when N =:= 0 ->
+   			procket:close(Socket),
+   			{error, {recv, eagain}};
         {error, eagain} ->
-            timer:sleep(10),
-            sock_resp(Socket);
+            timer:sleep(5),
+            sock_resp(Socket, N - 1);
         {error, E} ->
-        	{error, E};
+        	procket:close(Socket),
+        	{error, {recv, E}};
         {ok, Buf} ->
-            ok = procket:close(Socket),
+        	procket:close(Socket),
             {ok, Re} = re:compile("^-1."),
             case re:run(binary_to_list(Buf) , Re) of
             	nomatch -> {ok, binary_to_list(Buf)};
